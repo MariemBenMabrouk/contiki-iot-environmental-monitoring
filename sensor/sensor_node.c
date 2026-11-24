@@ -1,3 +1,4 @@
+
 #include "contiki.h"
 #include "net/uip.h"
 #include "net/uip-ds6.h"
@@ -21,28 +22,44 @@ AUTOSTART_PROCESSES(&environmental_monitoring_process);
 
 static struct uip_udp_conn *udp_conn;
 static struct etimer timer;
+
 static uint16_t sample_number = 0;
 
+/* Extract a sensor-specific identifier */
+static uint8_t get_node_id(void)
+{
+    return uip_lladdr.addr[7];
+}
+
+/* Configure IPv6 address */
 static void set_global_address(void)
 {
     uip_ipaddr_t ipaddr;
 
-    uip_ip6addr(&ipaddr, 0xaaaa, 0, 0, 0, 0, 0, 0, 0);
+    uip_ip6addr(&ipaddr,
+                0xaaaa, 0, 0, 0,
+                0, 0, 0, 0);
+
     uip_ds6_set_addr_iid(&ipaddr, &uip_lladdr);
+
     uip_ds6_addr_add(&ipaddr, 0, ADDR_AUTOCONF);
 }
 
-
+/* Generate and send environmental measurements */
 static void send_measurements(void)
 {
-    uint8_t node_id = uip_lladdr.addr[7];
+    uint8_t node_id = get_node_id();
 
-    /* Give each sensor a different environmental baseline */
-    uint16_t temperature_base = 190 + (node_id * 23) % 80;
-    uint16_t luminosity_base = 150 + (node_id * 137) % 500;
+    /* Different baseline for each sensor */
+    uint16_t temperature_base =
+        190 + (node_id * 23) % 80;
 
-    /* Generate different variations over time */
-    uint16_t phase = (sample_number + node_id * 3) % 12;
+    uint16_t luminosity_base =
+        150 + (node_id * 137) % 500;
+
+    /* Time-dependent variations */
+    uint16_t phase =
+        (sample_number + node_id * 3) % 12;
 
     uint16_t temperature =
         temperature_base + (phase % 7) * 5;
@@ -51,7 +68,7 @@ static void send_measurements(void)
         luminosity_base +
         ((sample_number * 83 + node_id * 47) % 200);
 
-    char message[100];
+    char message[120];
 
     snprintf(message, sizeof(message),
              "{\"node\":%u,\"temperature\":%u.%u,\"luminosity\":%u,\"sample\":%u}",
@@ -61,14 +78,17 @@ static void send_measurements(void)
              luminosity,
              sample_number);
 
-    uip_udp_packet_send(udp_conn, message, strlen(message));
+    /* Send data to gateway */
+    uip_udp_packet_send(udp_conn,
+                        message,
+                        strlen(message));
 
     printf("ENVIRONMENTAL DATA: %s\n", message);
 
     sample_number++;
 }
 
-
+/* Main Contiki process */
 PROCESS_THREAD(environmental_monitoring_process, ev, data)
 {
     uip_ipaddr_t destination;
@@ -77,19 +97,36 @@ PROCESS_THREAD(environmental_monitoring_process, ev, data)
 
     set_global_address();
 
+    printf("\n=== ENVIRONMENTAL SENSOR STARTED ===\n");
+    printf("Node ID: %u\n", get_node_id());
+
+    printf("Link-layer address: ");
+    for(int i = 0; i < 8; i++) {
+        printf("%02x", uip_lladdr.addr[i]);
+    }
+    printf("\n");
+
+    /* Gateway IPv6 address */
     uip_ip6addr(&destination,
-                0xaaaa, 0, 0, 0, 0, 0x00ff, 0xfe00, 1);
+                0xaaaa, 0, 0, 0,
+                0, 0x00ff, 0xfe00, 1);
 
     udp_conn = udp_new(&destination,
                        UIP_HTONS(UDP_SERVER_PORT), NULL);
 
+    if(udp_conn == NULL) {
+        printf("ERROR: UDP connection creation failed\n");
+        PROCESS_EXIT();
+    }
+
     udp_bind(udp_conn, UIP_HTONS(UDP_CLIENT_PORT));
 
-    printf("Environmental sensor started\n");
+    printf("UDP connection configured\n");
 
     etimer_set(&timer, SEND_INTERVAL);
 
     while(1) {
+
         PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&timer));
 
         send_measurements();
