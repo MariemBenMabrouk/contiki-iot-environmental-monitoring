@@ -1,4 +1,3 @@
-
 #include "contiki.h"
 #include "net/uip.h"
 #include "net/uip-ds6.h"
@@ -25,10 +24,18 @@ static struct etimer timer;
 
 static uint16_t sample_number = 0;
 
-/* Extract a sensor-specific identifier */
-static uint8_t get_node_id(void)
+/* Derive the sensor ID from the complete link-layer address, not just its
+ * final byte (which may be identical on multiple motes). */
+static uint32_t get_node_id(void)
 {
-    return uip_lladdr.addr[7];
+    uint32_t hash = 2166136261UL;
+    int i;
+
+    for(i = 0; i < sizeof(uip_lladdr.addr); i++) {
+        hash = (hash ^ uip_lladdr.addr[i]) * 16777619UL;
+    }
+
+    return hash;
 }
 
 /* Configure IPv6 address */
@@ -48,31 +55,31 @@ static void set_global_address(void)
 /* Generate and send environmental measurements */
 static void send_measurements(void)
 {
-    uint8_t node_id = get_node_id();
+    uint32_t node_id = get_node_id();
 
     /* Different baseline for each sensor */
     uint16_t temperature_base =
-        190 + (node_id * 23) % 80;
+        190 + (node_id * 23U) % 80;
 
     uint16_t luminosity_base =
-        150 + (node_id * 137) % 500;
+        150 + (node_id * 137U) % 500;
 
     /* Time-dependent variations */
     uint16_t phase =
-        (sample_number + node_id * 3) % 12;
+        (sample_number + node_id * 3U) % 12;
 
     uint16_t temperature =
         temperature_base + (phase % 7) * 5;
 
     uint16_t luminosity =
         luminosity_base +
-        ((sample_number * 83 + node_id * 47) % 200);
+        ((sample_number * 83U + node_id * 47U) % 200);
 
-    char message[120];
+    char message[128];
 
     snprintf(message, sizeof(message),
-             "{\"node\":%u,\"temperature\":%u.%u,\"luminosity\":%u,\"sample\":%u}",
-             node_id,
+             "{\"node\":%lu,\"temperature\":%u.%u,\"luminosity\":%u,\"sample\":%u}",
+             (unsigned long)node_id,
              temperature / 10,
              temperature % 10,
              luminosity,
@@ -92,16 +99,17 @@ static void send_measurements(void)
 PROCESS_THREAD(environmental_monitoring_process, ev, data)
 {
     uip_ipaddr_t destination;
+    int i;
 
     PROCESS_BEGIN();
 
     set_global_address();
 
     printf("\n=== ENVIRONMENTAL SENSOR STARTED ===\n");
-    printf("Node ID: %u\n", get_node_id());
+    printf("Node ID: %lu\n", (unsigned long)get_node_id());
 
     printf("Link-layer address: ");
-    for(int i = 0; i < 8; i++) {
+    for(i = 0; i < sizeof(uip_lladdr.addr); i++) {
         printf("%02x", uip_lladdr.addr[i]);
     }
     printf("\n");
@@ -126,7 +134,6 @@ PROCESS_THREAD(environmental_monitoring_process, ev, data)
     etimer_set(&timer, SEND_INTERVAL);
 
     while(1) {
-
         PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&timer));
 
         send_measurements();
