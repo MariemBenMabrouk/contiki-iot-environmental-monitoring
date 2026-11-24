@@ -32,17 +32,30 @@ static void set_global_address(void)
     uip_ds6_addr_add(&ipaddr, 0, ADDR_AUTOCONF);
 }
 
+
 static void send_measurements(void)
 {
-    uint16_t phase = sample_number % 12;
-    uint16_t temperature = 210 + (phase % 7) * 7;
-    uint16_t luminosity = 180 + ((sample_number * 83) % 720);
+    uint8_t node_id = uip_lladdr.addr[7];
+
+    /* Give each sensor a different environmental baseline */
+    uint16_t temperature_base = 190 + (node_id * 23) % 80;
+    uint16_t luminosity_base = 150 + (node_id * 137) % 500;
+
+    /* Generate different variations over time */
+    uint16_t phase = (sample_number + node_id * 3) % 12;
+
+    uint16_t temperature =
+        temperature_base + (phase % 7) * 5;
+
+    uint16_t luminosity =
+        luminosity_base +
+        ((sample_number * 83 + node_id * 47) % 200);
 
     char message[100];
 
     snprintf(message, sizeof(message),
              "{\"node\":%u,\"temperature\":%u.%u,\"luminosity\":%u,\"sample\":%u}",
-             uip_lladdr.addr[7],
+             node_id,
              temperature / 10,
              temperature % 10,
              luminosity,
@@ -54,6 +67,7 @@ static void send_measurements(void)
 
     sample_number++;
 }
+
 
 PROCESS_THREAD(environmental_monitoring_process, ev, data)
 {
